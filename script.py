@@ -3,6 +3,9 @@ import time
 import logging
 from datetime import datetime
 import pytz
+import asyncio
+import json
+import websockets
 
 # === Logging ===
 logging.basicConfig(
@@ -16,6 +19,12 @@ IST = pytz.timezone('Asia/Kolkata')
 SYMBOL = 'BTC/USDC:USDC'
 TIMEFRAME = '5m'
 LIMIT = 20
+
+# === Trading Window ===
+START_HOUR = 23   # 8:00 AM IST
+START_MINUTE = 20
+END_HOUR = 23    # 12:00 AM IST (midnight)
+END_MINUTE = 59
 
 RISK = 5                # $ per trade
 REWARD = 20             # $ per TP
@@ -32,7 +41,9 @@ def init_exchange():
 # === Time ===
 def is_market_hours():
     now = datetime.now(IST)
-    return 20 <= now.hour < 24
+    start = now.replace(hour=START_HOUR, minute=START_MINUTE, second=0, microsecond=0)
+    end = now.replace(hour=END_HOUR, minute=END_MINUTE, second=0, microsecond=0)
+    return start <= now < end
 
 # === Candle Analysis ===
 def analyze_candle(candle):
@@ -48,11 +59,18 @@ def find_entry_pattern(candles):
     for i in range(len(candles) - 1):
         c1 = candles[i]
         c2 = candles[i + 1]
+        # Convert c1's timestamp to IST
+        c1_time = datetime.fromtimestamp(c1[0] / 1000, IST)
+        # Only consider pairs where the first candle is at or after START_HOUR:START_MINUTE
+        if (c1_time.hour < START_HOUR or
+            (c1_time.hour == START_HOUR and c1_time.minute < START_MINUTE)):
+            continue
+
         type1 = analyze_candle(c1)
         type2 = analyze_candle(c2)
 
         if (type1 == 'GREEN' and type2 == 'RED') or (type1 == 'RED' and type2 == 'GREEN'):
-            ts1 = datetime.fromtimestamp(c1[0] / 1000, IST).strftime('%H:%M')
+            ts1 = c1_time.strftime('%H:%M')
             ts2 = datetime.fromtimestamp(c2[0] / 1000, IST).strftime('%H:%M')
             logger.info(f"Pattern found: {type1} → {type2} at {ts1} → {ts2}")
             high1, low1 = c1[2], c1[3]
@@ -69,30 +87,44 @@ def find_entry_pattern(candles):
             }
     return None
 
+async def wait_for_breakout_ws(supermax, supermin, coin="BTC", mainnet=True):
+    url = "wss://api.hyperliquid.xyz/ws" if mainnet else "wss://api.hyperliquid-testnet.xyz/ws"
+    async with websockets.connect(url) as ws:
+        sub_msg = {
+            "method": "subscribe",
+            "subscription": {"type": "trades", "coin": coin}
+        }
+        await ws.send(json.dumps(sub_msg))
+        logger.info(f"[WebSocket] Subscribed to trades for {coin}")
+        async for message in ws:
+            data = json.loads(message)
+            if data.get("channel") == "trades":
+                trades = data.get("data", [])
+                for trade in trades:
+                    price = float(trade["px"])
+                    logger.info(f"[WebSocket] Trade price: {price}")
+                    if price > supermax:
+                        logger.info(f"[WebSocket] Breakout LONG at {price}")
+                        return "LONG", price
+                    elif price < supermin:
+                        logger.info(f"[WebSocket] Breakout SHORT at {price}")
+                        return "SHORT", price
+
 # === Monitor & Simulate Trade ===
 def monitor_and_trade(dex, setup, sl_losses, tp_count):
-    logger.info(f"Watching for breakout (supermax: {setup['supermax']:.2f}, supermin: {setup['supermin']:.2f})")
+    logger.info(f"Watching for breakout (supermax: {setup['supermax']:.2f}, supermin: {setup['supermin']:.2f}) [WebSocket]")
     entry, direction = None, None
 
-    while True:
-        try:
-            ticker = dex.fetch_ticker(SYMBOL)
-            price = ticker['last']
-            logger.info(f"Price: {price:.2f}")
-
-            if price > setup['supermax']:
-                entry = setup['supermax']
-                direction = 'LONG'
-                break
-            elif price < setup['supermin']:
-                entry = setup['supermin']
-                direction = 'SHORT'
-                break
-
-            time.sleep(10)
-        except Exception as e:
-            logger.error(f"Ticker error: {e}")
-            time.sleep(10)
+    # === WebSocket for real-time breakout detection ===
+    try:
+        result = asyncio.run(wait_for_breakout_ws(setup['supermax'], setup['supermin'], coin="BTC"))
+        if result is None:
+            logger.error("WebSocket returned no breakout result.")
+            return sl_losses, tp_count
+        direction, entry = result
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        return sl_losses, tp_count
 
     range_ = setup['range']
     max_position_size = MAX_POSITION_VALUE
@@ -111,6 +143,8 @@ def monitor_and_trade(dex, setup, sl_losses, tp_count):
         try:
             ticker = dex.fetch_ticker(SYMBOL)
             price = ticker['last']
+            now_time = datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')
+            logger.info(f"[1s Monitor] {now_time} Price: {price:.2f}")
 
             if direction == 'LONG':
                 if price <= stop:
@@ -133,10 +167,10 @@ def monitor_and_trade(dex, setup, sl_losses, tp_count):
                     sl_losses = 0
                     break
 
-            time.sleep(10)
+            time.sleep(1)
         except Exception as e:
             logger.error(f"Monitor error: {e}")
-            time.sleep(10)
+            time.sleep(1)
 
     return sl_losses, tp_count
 
