@@ -32,7 +32,7 @@ def init_exchange():
 # === Time ===
 def is_market_hours():
     now = datetime.now(IST)
-    return 8 <= now.hour < 15
+    return 20 <= now.hour < 24
 
 # === Candle Analysis ===
 def analyze_candle(candle):
@@ -160,7 +160,9 @@ def run_strategy(dex):
         # Check if we hit daily stop rule
         if tp_count >= 1 or sl_losses >= 3:
             logger.info(f"📛 DAILY STOP: TP count = {tp_count}, SL count = {sl_losses}")
-            break
+            time.sleep(300)
+            # change to wake up at 8AM
+            continue
 
         if not pattern_found and now.hour >= 8:
             try:
