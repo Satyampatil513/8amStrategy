@@ -23,14 +23,14 @@ TIMEFRAME = '5m'
 LIMIT = 20
 
 # === Trading Window ===
-START_HOUR = 1   # 8:00 AM IST
-START_MINUTE = 45
+START_HOUR = 8   # 8:00 AM IST
+START_MINUTE = 0
 END_HOUR = 23    # 12:00 AM IST (midnight)
 END_MINUTE = 59
 
-RISK = 0.5                # $ per trade
-REWARD = 2.0             # $ per TP
-MARGIN = 150            # Daily max margin
+RISK = 2.0                # $ per trade
+REWARD = 8.0             # $ per TP
+MARGIN = 100            # Daily max margin
 LEVERAGE = 40
 MAX_POSITION_VALUE = MARGIN * LEVERAGE  # $6000 max trade value
 
