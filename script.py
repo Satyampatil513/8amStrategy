@@ -71,6 +71,7 @@ def analyze_candle(candle):
 # === Pattern Logic ===
 def find_entry_pattern(candles):
     # Get session start datetime
+    # wrong logic, why collecting previous candles. change it to websocket
     now = datetime.now(IST)
     session_start = now.replace(hour=START_HOUR, minute=START_MINUTE, second=0, microsecond=0)
     # Filter candles after or equal to session start
@@ -114,6 +115,7 @@ async def breakout_and_monitor_ws(dex, supermax, supermin, sl_losses, tp_count, 
             "method": "subscribe",
             "subscription": {"type": "trades", "coin": coin}
         }
+        # Globally subscribe why again and again
         await ws.send(json.dumps(sub_msg))
         logger.info(f"[WebSocket] Subscribed to trades for {coin}")
         async for message in ws:
@@ -141,13 +143,14 @@ async def breakout_and_monitor_ws(dex, supermax, supermin, sl_losses, tp_count, 
                             qty = min(RISK / range_, max_qty)
                             # --- Correct SL/TP logic ---
                             if direction == 'LONG':
-                                stop = entry - range_
-                                target = entry + 4 * range_
+                                stop = entry - range_  #supermin
+                                target = entry + 4 * range_   # entry + 4*(entry - supermin)
                             else:  # SHORT
-                                stop = entry + range_
-                                target = entry - 4 * range_
+                                stop = entry + range_  #supermax
+                                target = entry - 4 * range_  # entry - 4*(supermax - entry)
                             # === Place actual trade ===
                             try:
+                                # can done by websocket ?
                                 order = dex.create_order(
                                     SYMBOL,
                                     "market",
@@ -225,17 +228,18 @@ def run_strategy(dex):
 
         if not is_market_hours():
             logger.info("Market closed. Sleeping 5 min.")
+            # change it to START HOUR , if not reset this variablws
             time.sleep(300)
             continue
 
-        # Check if we hit daily stop rule
+        # Check if we hit daily stop rule, we can move it bepw
         if tp_count >= 1 or sl_losses >= 3:
             logger.info(f"📛 DAILY STOP: TP count = {tp_count}, SL count = {sl_losses}")
             time.sleep(300)
-            # change to wake up at 8AM
+            # change to wake up atSTART_HOUR
             continue
 
-        session_start = now.replace(hour=START_HOUR, minute=START_MINUTE, second=0, microsecond=0)
+        session_start = now.replace(hour=START_HOUR, minute=START_MINUTE, second=0, microsecond=0) 
         minutes_since_start = int((now - session_start).total_seconds() // 60)
         if minutes_since_start < 0:
             # Wait until session start
@@ -254,7 +258,7 @@ def run_strategy(dex):
                 # Calculate timestamp for today at session start
                 start_dt = now.replace(hour=START_HOUR, minute=START_MINUTE, second=0, microsecond=0)
                 start_ts = int(start_dt.timestamp() * 1000)
-                candles = dex.fetch_ohlcv(SYMBOL, TIMEFRAME, since=start_ts, limit=LIMIT)
+                candles = dex.fetch_ohlcv(SYMBOL, TIMEFRAME, since=start_ts, limit=LIMIT)  #fetching, why limit 20
                 setup = find_entry_pattern(candles)
                 if setup:
                     pattern_found = True
