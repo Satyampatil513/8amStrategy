@@ -1,40 +1,49 @@
 import asyncio
 import websockets
 import json
+from typing import TypedDict
 
-# WebSocket URL (choose testnet or mainnet)
-WS_URL = "wss://api.hyperliquid.xyz/ws"  # Use testnet if needed: "wss://api.hyperliquid-testnet.xyz/ws"
+class CandleSubscription(TypedDict):
+    type: str
+    coin: str
+    interval: str
 
-# Subscription message to get 1-minute candles for BTC:USDC
-subscription_message = {
-    "method": "subscribe",
-    "subscription": {
-        "type": "candle",
-        "coin": "BTC:USDC/USDC",
-        "interval": "1m"
+class SubscriptionMessage(TypedDict):
+    method: str
+    subscription: CandleSubscription
+
+WS_URL = "wss://api.hyperliquid.xyz/ws"
+
+def get_subscription_msg(coin: str, interval: str) -> SubscriptionMessage:
+    return {
+        "method": "subscribe",
+        "subscription": {
+            "type": "candle",
+            "coin": coin,
+            "interval": interval
+        }
     }
-}
 
-async def listen_to_candles():
-    async with websockets.connect(WS_URL) as websocket:
-        # Send subscription
-        await websocket.send(json.dumps(subscription_message))
-        print(f"Subscribed to 1m BTC:USDC candles")
+async def listen_candles(coin: str = "BTC", interval: str = "5m"):
+    async with websockets.connect(WS_URL, ping_interval=None) as ws:
+        sub_msg = get_subscription_msg(coin, interval)
+        await ws.send(json.dumps(sub_msg))
+        print(f"✅ Subscribed to {interval} candles for {coin}\n")
 
-        while True:
-            try:
-                # Receive messages
-                message = await websocket.recv()
-                data = json.loads(message)
+        try:
+            while True:
+                msg = await ws.recv()
+                data = json.loads(msg)
 
-                # Print only candle updates
-                if data.get("channel") == "candle":
-                    print("Candle Data:", json.dumps(data, indent=2))
-            except websockets.exceptions.ConnectionClosed as e:
-                print("WebSocket connection closed:", e)
-                break
-            except Exception as e:
-                print("Error:", e)
+                channel = data.get("channel")
+                if channel == "subscriptionResponse":
+                    print("🟢 Subscription acknowledged.")
+                elif channel == "candle":
+                    print("📈 Candle update:", json.dumps(data["data"], indent=2))
+                else:
+                    print("📦 Other message:", json.dumps(data, indent=2))
+        except websockets.exceptions.ConnectionClosed as e:
+            print("🔴 Connection closed:", e)
 
 if __name__ == "__main__":
-    asyncio.run(listen_to_candles())
+    asyncio.run(listen_candles())
